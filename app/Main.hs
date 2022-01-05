@@ -114,7 +114,6 @@ embedSkull skullID skull = def
   & #title ?~ skullIdToText skullID
   & #description ?~ "```" <> Main.title skull <> "```"
   & #image ?~ embedImage ("https://ipfs.blockfrost.dev/ipfs/" <> Main.imageCID skull)
-  & #color ?~ testEmbedColour
 
 skullIdToText :: Int -> Text
 skullIdToText skullId = T.pack $ "HYPESKULL" ++ padLeft 4 '0' (show skullId)
