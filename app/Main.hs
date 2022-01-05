@@ -106,6 +106,8 @@ main = do
                       embededSkull    = embedSkull skullID skull
                   void $ tell @Embed ctx $ embededSkull
                     & #fields .~ (EmbedField "RARITY" ("```" <> rarityName (Main.score skullRarity) <> " #" <> T.pack (show $ Main.rank skullRank) <> "```") True:fields)
+                    & #color ?~ rarityColor (Main.score skullRarity)
+
 
 embedSkull :: Int -> HypeSkull -> Embed
 embedSkull skullID skull = def
@@ -198,6 +200,22 @@ rarityName score
   | score > 100 = "VERY RARE"
   | score > 1 = "RARE"
   | otherwise = "UNKNOWN"
+
+rarityColor :: Double -> Colour Double
+rarityColor score
+  | score > 900 = colour 0xb1bb1a
+  | score > 550 = colour 0x460086
+  | score > 200 = colour 0xa20f0f
+  | score > 100 = colour 0x412fb5
+  | score > 1   = colour 0x8A78FF
+  | otherwise   = colour 0x8A78FF
+  where
+    colour :: Word64 -> Colour Double
+    colour hex = extractColour $ colourFromWord64 hex
+
+    extractColour :: IntColour -> Colour Double
+    extractColour (IntColour c) = c
+
 
 testEmbedColour :: Colour Double
 testEmbedColour = extractColour $ colourFromWord64 10181046
