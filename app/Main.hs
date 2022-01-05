@@ -216,11 +216,6 @@ rarityColor score
     extractColour :: IntColour -> Colour Double
     extractColour (IntColour c) = c
 
-
-testEmbedColour :: Colour Double
-testEmbedColour = extractColour $ colourFromWord64 10181046
-  where extractColour (IntColour c) = c
-
 padLeft :: Int -> Char -> String -> String
 padLeft n c s = replicate (n - length s) c ++ s
 
