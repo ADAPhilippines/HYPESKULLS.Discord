@@ -1,0 +1,61 @@
+cabal-version:      2.4
+name:               HYPESKULLS-Discord
+version:            0.1.0.0
+
+-- A short (one-line) description of the package.
+-- synopsis:
+
+-- A longer description of the package.
+-- description:
+
+-- A URL where users can report bugs.
+-- bug-reports:
+
+-- The license under which the package is released.
+-- license:
+author:             Clark Alesna
+maintainer:         clark_alesna@hotmail.com
+
+-- A copyright notice.
+-- copyright:
+-- category:
+extra-source-files: CHANGELOG.md
+
+executable HYPESKULLS-Discord
+    main-is:          Main.hs
+    build-depends:
+        , base             ^>=4.14.1.0
+        , calamity         >=0.1.31.0
+        , data-default
+        , data-flags
+        , di
+        , di-polysemy
+        , generic-lens
+        , lens
+        , polysemy
+        , polysemy-plugin
+        , text
+        , text-show
+        , colour
+        , req
+        , aeson
+        , containers
+
+    ghc-options:        -fplugin=Polysemy.Plugin
+    hs-source-dirs:     app
+    default-language:   Haskell2010
+    default-extensions:
+        DataKinds
+        OverloadedLabels
+        OverloadedStrings
+        TypeApplications
+        TypeOperators
+        BlockArguments
+        TemplateHaskell
+        ScopedTypeVariables
+        PolyKinds
+        LambdaCase
+        GADTs
+        FlexibleContexts
+        DeriveGeneric
+        TypeFamilies
