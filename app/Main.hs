@@ -21,13 +21,17 @@ import Calamity.Gateway.Types (StatusUpdateData(StatusUpdateData), since, game, 
 import Data.Colour
 import Calamity.Internal.IntColour
 import Data.Word (Word64)
-import Network.HTTP.Req (req, https, GET (GET), (/:), jsonResponse, responseBody, runReq, defaultHttpConfig, NoReqBody (NoReqBody), (=:))
+import Network.HTTP.Req (req, https, GET (GET), (/:), jsonResponse, responseBody, runReq, defaultHttpConfig, NoReqBody (NoReqBody), (=:), responseStatusCode)
 import Data.Aeson
 import Data.Aeson.TH
 import Control.Monad.IO.Class
 import GHC.Generics (Generic)
 import TextShow (TextShow(showt))
 import System.Environment (getEnv)
+
+newtype WalletAddress = WalletAddress {
+  unWalletAddress :: Text
+} deriving (Show, Eq, Generic)
 
 newtype HypeSkullPropertyOccurence = HypeSkullPropertyOccurence {
   occurrence :: Double
@@ -107,7 +111,29 @@ main = do
                   void $ tell @Embed ctx $ embededSkull
                     & #fields .~ (EmbedField "RARITY" ("```" <> rarityName (Main.score skullRarity) <> " #" <> T.pack (show $ Main.rank skullRank) <> "```") True:fields)
                     & #color ?~ rarityColor (Main.score skullRarity)
+                    
+        command @'[] "idt" $ \ctx -> do
+          eitherDMC <- invoke $ CreateDM $ ctx ^. #message . #author
+          case eitherDMC of
+            Left _ -> info @Text "DM Channel not found"
+            Right dmChannel -> do
+              addr <- P.embed requestAuthAddress
+              void $ tell @Embed dmChannel $ embedAuthAddr addr
 
+embedAuthAddr :: Text -> Embed
+embedAuthAddr addr = def
+  & #title ?~ "Authenticate with your Identity Token"
+  & #description ?~ "Please send 1.2 $ADA to the wallet address provided below. Your 1 $ADA will be returned once authentication is complete."
+  & #fields .~ [
+    EmbedField "AUTH ADDRESS" ("```" <> addr <> "```") True
+  ]
+  & #image ?~ embedImage ("https://api.identity.adaph.io/qr/generate?data=" <> addr)
+
+requestAuthAddress :: IO Text
+requestAuthAddress = runReq defaultHttpConfig $ do
+  r <- req GET ( https "api.identity.adaph.io" /: "identity" /: "auth" ) NoReqBody jsonResponse mempty
+  let addr = responseBody r :: Text
+  return addr
 
 embedSkull :: Int -> HypeSkull -> Embed
 embedSkull skullID skull = def
