@@ -127,7 +127,7 @@ main = do
                     & #color ?~ rarityColor (Main.score skullRarity)
                     
         command @'[] "idt" $ \ctx -> do
-          eitherDMC <- invoke $ CreateDM $ ctx ^. #message . #author
+          eitherDMC <- invoke $ CreateDM $ ctx ^. #user
           case eitherDMC of
             Left _ -> info @Text "DM Channel not found"
             Right dmChannel -> do
@@ -136,7 +136,14 @@ main = do
               identity <- P.embed $ getIdentity addr 0
               case identity of
                 Nothing -> void $ tell @Text dmChannel "You have failed to authenticate at the given time. Please try again."
-                Just identity' -> void $ tell @Text dmChannel "You have successfully linked your Discord account to your IdentityToken."
+                Just identity' -> do
+                  let user = ctx ^. #user
+                  void $ tell @Text ctx $ mention user 
+                    <> " has successfully linked his IdentityToken.\n" 
+                    <> "https://cardanoscan.io/token/" 
+                    <> policyId identity' 
+                    <> "." 
+                    <> assetName identity'
 
 embedAuthAddr :: Text -> Embed
 embedAuthAddr addr = def
@@ -169,12 +176,11 @@ getIdentity addr retries = do
       if retries >= maxRetries
       then return Nothing
       else do
-        putStrLn $ "Retrying in " ++ show retryInterval ++ " seconds..."
         threadDelay $ retryInterval * 1000 * 1000
         getIdentity addr $ retries + 1
     where
-      retryInterval = 5
-      maxRetries    = 3
+      retryInterval = 20
+      maxRetries    = 15
 
 embedSkull :: Int -> HypeSkull -> Embed
 embedSkull skullID skull = def
