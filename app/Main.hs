@@ -113,7 +113,7 @@ main = do
     $ do
       info @Text "Bot starting up!"
       react @'MessageCreateEvt $ \(msg,_,_) -> 
-        when True $
+        when False $
         void . invoke $ CreateReaction msg msg (UnicodeEmoji "😄")
       react @ 'ReadyEvt \_ -> 
         sendPresence $ StatusUpdateData Nothing (Just (Calamity.Types.Model.Presence.Activity.activity "H.Y.P.E." Game)) Online False
@@ -266,8 +266,6 @@ main = do
 
               getMembersInternal initialMembers g = do
                 invoke $ ListGuildMembers g $ ListMembersOptions (Just 1000) (Just $ getLastMemberSnowflake initialMembers)
-
-
 
 embedAuthAddr :: Text -> Embed
 embedAuthAddr addr = def
