@@ -21,13 +21,17 @@ import Calamity.Gateway.Types (StatusUpdateData(StatusUpdateData), since, game, 
 import Data.Colour
 import Calamity.Internal.IntColour
 import Data.Word (Word64)
-import Network.HTTP.Req (req, https, GET (GET), (/:), jsonResponse, responseBody, runReq, defaultHttpConfig, NoReqBody (NoReqBody), (=:), responseStatusCode)
+import Network.HTTP.Req (req, https, GET (GET), (/:), jsonResponse, responseBody, runReq, defaultHttpConfig, NoReqBody (NoReqBody), (=:), responseStatusCode, JsonResponse)
 import Data.Aeson
 import Data.Aeson.TH
 import Control.Monad.IO.Class
 import GHC.Generics (Generic)
 import TextShow (TextShow(showt))
 import System.Environment (getEnv)
+import Control.Exception (try, Exception, SomeException (SomeException))
+import Data.Semigroup (Any(Any))
+import Control.Concurrent
+import Calamity (EmbedFooter(text))
 
 newtype WalletAddress = WalletAddress {
   unWalletAddress :: Text
@@ -61,10 +65,20 @@ data HypeSkull = HypeSkull {
   tokenRarityScore :: Maybe HypeSkullRarityScore
 } deriving (Generic, Show, Eq)
 
+data Identity = Identity {
+  assetName :: Text,
+  avatar :: Text,
+  expiresIn :: Int,
+  key :: Text,
+  policyId :: Text,
+  username :: Text
+} deriving (Generic, Show, Eq)
+
 deriveJSON defaultOptions 'HypeSkullPropertyOccurence
 deriveJSON defaultOptions 'HypeSkullRarityScore
 deriveJSON defaultOptions 'HypeSkullRank
 deriveJSON defaultOptions 'HypeSkull
+deriveJSON defaultOptions 'Main.Identity
 
 main :: IO ()
 main = do
@@ -119,11 +133,15 @@ main = do
             Right dmChannel -> do
               addr <- P.embed requestAuthAddress
               void $ tell @Embed dmChannel $ embedAuthAddr addr
+              identity <- P.embed $ getIdentity addr 0
+              case identity of
+                Nothing -> void $ tell @Text dmChannel "You have failed to authenticate at the given time. Please try again."
+                Just identity' -> void $ tell @Text dmChannel "You have successfully linked your Discord account to your IdentityToken."
 
 embedAuthAddr :: Text -> Embed
 embedAuthAddr addr = def
   & #title ?~ "Authenticate with your Identity Token"
-  & #description ?~ "Please send 1.2 $ADA to the wallet address provided below. Your 1 $ADA will be returned once authentication is complete."
+  & #description ?~ "Please send **1.2 $ADA** within **5 minutes** to the wallet address provided below. Your **1 $ADA** will be returned once authentication is complete."
   & #fields .~ [
     EmbedField "AUTH ADDRESS" ("```" <> addr <> "```") True
   ]
@@ -134,6 +152,29 @@ requestAuthAddress = runReq defaultHttpConfig $ do
   r <- req GET ( https "api.identity.adaph.io" /: "identity" /: "auth" ) NoReqBody jsonResponse mempty
   let addr = responseBody r :: Text
   return addr
+
+queryIdentity :: Text -> IO Main.Identity
+queryIdentity addr = runReq defaultHttpConfig $ do
+  r <- req GET ( https "api.identity.adaph.io" /: "identity" /: "token" /: addr ) NoReqBody jsonResponse mempty
+  let identity = responseBody r :: Main.Identity
+  return identity
+
+getIdentity :: Text -> Int -> IO (Maybe Main.Identity)
+getIdentity addr retries = do
+  result <- try (queryIdentity addr) :: IO (Either SomeException Main.Identity)
+  case result of
+    Right identity  -> do
+      return $ Just identity
+    Left _          ->  
+      if retries >= maxRetries
+      then return Nothing
+      else do
+        putStrLn $ "Retrying in " ++ show retryInterval ++ " seconds..."
+        threadDelay $ retryInterval * 1000 * 1000
+        getIdentity addr $ retries + 1
+    where
+      retryInterval = 5
+      maxRetries    = 3
 
 embedSkull :: Int -> HypeSkull -> Embed
 embedSkull skullID skull = def
