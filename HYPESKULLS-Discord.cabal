@@ -40,6 +40,7 @@ executable HYPESKULLS-Discord
         , req
         , aeson
         , containers
+        , utf8-string
 
     ghc-options:        -fplugin=Polysemy.Plugin
     hs-source-dirs:     app

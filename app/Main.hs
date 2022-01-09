@@ -8,7 +8,7 @@ import           Calamity.Metrics.Noop
 import           Control.Lens
 import           Control.Monad
 import           Data.Default
-import           Data.Map (Map, fromList, (!))
+import           Data.Map (Map, fromList, (!), toList)
 import           Data.Generics.Labels       ()
 import           Data.Maybe
 import           Data.Text                  (Text, pack, toUpper, splitOn, toLower)
@@ -26,8 +26,12 @@ import Data.Aeson
 import Data.Aeson.TH
 import Control.Monad.IO.Class
 import GHC.Generics (Generic)
-import TextShow (TextShow(showt))
+import TextShow (TextShow(showt), fromString)
 import System.Environment (getEnv)
+import Data.ByteString.Lazy.UTF8 as BLU hiding (length, decode)
+import Calamity (Snowflake(fromSnowflake))
+import Control.Concurrent (threadDelay)
+import Data.Flags (BoundedFlags(allFlags))
 
 newtype WalletAddress = WalletAddress {
   unWalletAddress :: Text
@@ -66,6 +70,22 @@ deriveJSON defaultOptions 'HypeSkullRarityScore
 deriveJSON defaultOptions 'HypeSkullRank
 deriveJSON defaultOptions 'HypeSkull
 
+hypeRoles :: Map Text Word64
+hypeRoles = fromList [
+    ("Holy Grail", 881636191672352828),
+    ("Ergo Eyes", 881664269354168360),
+    ("3rd Eye", 881713830546247761),
+    ("Glitch", 881636119870058526),
+    ("Onyx", 885600733150453821),
+    ("KoK", 887366025174196284),
+    ("Diamond", 887686335622701116),
+    ("Black Diamond", 929689208715612190),
+    ("Gold", 929689587259932713),
+    ("Pearl", 929689751978639360),
+    ("Platinum", 929690081277661194),
+    ("Rose Gold", 929690274475692032)
+  ]
+
 main :: IO ()
 main = do
   token <- T.pack <$> getEnv "BOT_TOKEN"
@@ -78,13 +98,13 @@ main = do
     . runMetricsNoop
     . useFullContext
     . useConstantPrefix "*"
-    . runBotIO (BotToken token) defaultIntents
+    . runBotIO (BotToken token) allFlags
     $ do
       info @Text "Bot starting up!"
-      react @'MessageCreateEvt $ \(msg,_,_) -> do
-        when ("Haskell" `T.isInfixOf` (msg ^. #content)) $
-          void . invoke $ CreateReaction msg msg (UnicodeEmoji "😄")
-      react @ 'ReadyEvt \_ -> do
+      react @'MessageCreateEvt $ \(msg,_,_) -> 
+        when True $
+        void . invoke $ CreateReaction msg msg (UnicodeEmoji "😄")
+      react @ 'ReadyEvt \_ -> 
         sendPresence $ StatusUpdateData Nothing (Just (Calamity.Types.Model.Presence.Activity.activity "H.Y.P.E." Game)) Online False
       addCommands $ do
         helpCommand
@@ -111,7 +131,7 @@ main = do
                   void $ tell @Embed ctx $ embededSkull
                     & #fields .~ (EmbedField "RARITY" ("```" <> rarityName (Main.score skullRarity) <> " #" <> T.pack (show $ Main.rank skullRank) <> "```") True:fields)
                     & #color ?~ rarityColor (Main.score skullRarity)
-                    
+
         command @'[] "idt" $ \ctx -> do
           eitherDMC <- invoke $ CreateDM $ ctx ^. #message . #author
           case eitherDMC of
@@ -119,6 +139,113 @@ main = do
             Right dmChannel -> do
               addr <- P.embed requestAuthAddress
               void $ tell @Embed dmChannel $ embedAuthAddr addr
+
+        command @'[] "roles" $ \ctx -> do
+          let guild = ctx ^. #guild
+          case guild of
+            Nothing -> info @Text "Not in a guild"
+            Just g -> do
+              roles <- invoke $ GetGuildRoles g
+              case roles of
+                Left _ -> info @Text "Roles not found"
+                Right r -> do
+                  let roleNames = map (\r -> r ^. #name) r
+                      roleIds = map (\r -> r ^. #id) r
+                  void $ reply @Text (ctx ^. #message) $ "**Server Roles**: \n```" <> T.intercalate "\n" (zipWith (\r n -> T.pack (show r) <> ": " <> n) roleIds roleNames) <> "```"
+
+        command @'[Maybe (Snowflake User), Maybe (Snowflake Role)] "addrole" $ \ctx user role -> do
+          void $ info @Text $ "User: " <> showt user
+          void $ info @Text $ "Role: " <> showt role
+          admins <- P.embed adminIds
+          case admins of
+            Just as ->  do
+              let callingUser = fromSnowflake $ ctx ^. #message . #author
+              if callingUser `elem` as
+                then do
+                  let guild = ctx ^. #guild
+                  case guild of
+                    Nothing -> info @Text "Not in a guild"
+                    Just g -> do
+                      case user of
+                        Nothing -> info @Text "No user specified"
+                        Just u -> do
+                          case role of
+                            Nothing -> info @Text "No role specified"
+                            Just r -> do
+                              void $ invoke $ AddGuildMemberRole g u r
+                              void $ reply @Text (ctx ^. #message) "Role added"
+                else
+                  void $ reply @Text (ctx ^. #message) "You are not an admin"
+            Nothing -> info @Text "No Admin Id has been set" -- Can't be possible?
+
+        command @'[Maybe (Snowflake User), Maybe (Snowflake Role)] "removerole" $ \ctx user role -> do
+          void $ info @Text $ "User: " <> showt user
+          void $ info @Text $ "Role: " <> showt role
+          admins <- P.embed adminIds
+          case admins of
+            Just as ->  do
+              let callingUser = fromSnowflake $ ctx ^. #message . #author
+              if callingUser `elem` as
+                then do
+                  let guild = ctx ^. #guild
+                  case guild of
+                    Nothing -> info @Text "Not in a guild"
+                    Just g -> do
+                      case user of
+                        Nothing -> info @Text "No user specified"
+                        Just u -> do
+                          case role of
+                            Nothing -> info @Text "No role specified"
+                            Just r -> do
+                              void $ invoke $ RemoveGuildMemberRole g u r
+                              void $ reply @Text (ctx ^. #message) "Role removed"
+                else
+                  void $ reply @Text (ctx ^. #message) "You are not an admin"
+            Nothing -> info @Text "No Admin Id has been set" -- Can't be possible?
+
+        command @'[] "purgeroles" $ \ctx -> do
+          admins <- P.embed adminIds
+          case admins of
+            Just as ->  do
+              let callingUser = fromSnowflake $ ctx ^. #message . #author
+              if callingUser `elem` as
+                then do
+                  let guild = ctx ^. #guild
+                  case guild of
+                    Nothing -> info @Text "Not in a guild"
+                    Just g -> do
+                      members <- getMembers [] g
+                      let memberIds = map (\m -> m ^. #id) members
+                      info @Text $ "Purging roles from " <> showt (length memberIds) <> " members"
+                      mapM_ (\m -> 
+                            mapM_ (\(k, v) -> do
+                            info @Text $ "Removing role " <> showt k <> " from " <> showt m
+                            void $ invoke $ RemoveGuildMemberRole g m (Snowflake v :: Snowflake Role)
+                          ) (toList hypeRoles :: [(Text, Word64)])
+                        ) memberIds
+                      void $ reply @Text (ctx ^. #message) "Roles purged"
+                else
+                  void $ reply @Text (ctx ^. #message) "You are not an admin"
+            Nothing -> info @Text "No Admin Id has been set" -- Can't be possible?
+            where
+              getMembers initialMembers g = do
+                members <- getMembersInternal initialMembers g
+                case members of
+                  Left _ -> return initialMembers
+                  Right m -> 
+                    if length members < 1000 then return (initialMembers <> m) else do 
+                      getMembers (initialMembers <> m) g
+
+              getLastMemberSnowflake :: [Member] -> Snowflake User
+              getLastMemberSnowflake members = getID $ last members
+
+              getMembersInternal [] g = do
+                invoke $ ListGuildMembers g $ ListMembersOptions (Just 1000) Nothing
+
+              getMembersInternal initialMembers g = do
+                invoke $ ListGuildMembers g $ ListMembersOptions (Just 1000) (Just $ getLastMemberSnowflake initialMembers)
+
+
 
 embedAuthAddr :: Text -> Embed
 embedAuthAddr addr = def
@@ -139,7 +266,7 @@ embedSkull :: Int -> HypeSkull -> Embed
 embedSkull skullID skull = def
   & #title ?~ skullIdToText skullID
   & #description ?~ "```" <> Main.title skull <> "```"
-  & #image ?~ embedImage ("https://ipfs.blockfrost.dev/ipfs/" <> Main.imageCID skull)
+  & #image ?~ embedImage ("https://ipfs.infura.io/ipfs/" <> Main.imageCID skull)
 
 skullIdToText :: Int -> Text
 skullIdToText skullId = T.pack $ "HYPESKULL" ++ padLeft 4 '0' (show skullId)
@@ -215,6 +342,12 @@ skullFields skull occurences = [
 
     getOccurence :: Text -> Text
     getOccurence key = showt $ truncate' (Main.occurrence (occurences ! key)) 2
+
+adminIds :: IO (Maybe [Word64])
+adminIds = do
+  adminIds <- getEnv "ADMIN_IDS"
+  let adminIdList = decode (BLU.fromString adminIds) :: Maybe [Word64]
+  return adminIdList
 
 
 rarityName :: Double -> Text
