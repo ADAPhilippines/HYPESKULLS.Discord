@@ -60,3 +60,4 @@ executable HYPESKULLS-Discord
         FlexibleContexts
         DeriveGeneric
         TypeFamilies
+        DeriveAnyClass
