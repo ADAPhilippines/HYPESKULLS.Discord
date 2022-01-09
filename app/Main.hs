@@ -11,6 +11,7 @@ import           Data.Default
 import           Data.Map (Map, fromList, (!), toList)
 import           Data.Generics.Labels       ()
 import           Data.Maybe
+import           Data.Hex
 import           Data.Text                  (Text, pack, toUpper, splitOn, toLower)
 import qualified Data.Text                  as T
 import qualified Di
@@ -21,7 +22,7 @@ import Calamity.Gateway.Types (StatusUpdateData(StatusUpdateData), since, game, 
 import Data.Colour
 import Calamity.Internal.IntColour
 import Data.Word (Word64)
-import Network.HTTP.Req (req, https, GET (GET), (/:), jsonResponse, responseBody, runReq, defaultHttpConfig, NoReqBody (NoReqBody), (=:), responseStatusCode, JsonResponse)
+import Network.HTTP.Req (req, https, GET (GET), (/:), jsonResponse, responseBody, runReq, defaultHttpConfig, NoReqBody (NoReqBody), (=:), responseStatusCode, JsonResponse, header, QueryParam, ReqBodyJson (ReqBodyJson), POST (POST), ignoreResponse)
 import Data.Aeson
 import Data.Aeson.TH
 import Control.Monad.IO.Class
@@ -33,6 +34,7 @@ import Data.Flags (BoundedFlags(allFlags))
 import Control.Exception (try, Exception, SomeException (SomeException))
 import Data.Semigroup (Any(Any))
 import Control.Concurrent ( threadDelay )
+import Data.Text.Encoding
 
 newtype WalletAddress = WalletAddress {
   unWalletAddress :: Text
@@ -75,11 +77,34 @@ data Identity = Identity {
   username :: Text
 } deriving (Generic, Show, Eq)
 
+data DiscordIdt = DiscordIdt {
+  discordId :: Int,
+  identityToken :: Text
+} deriving (Generic, Show, Eq)
+
+newtype AssetAddress = AssetAddress {
+  address :: Text
+} deriving (Generic, Show, Eq)
+
+data Address = Address {
+  stake_address :: Text,
+  script :: Bool
+} deriving (Generic, Show, Eq)
+
+data Asset = Asset {
+  unit :: Text,
+  quantity :: Text
+}
+
 deriveJSON defaultOptions 'HypeSkullPropertyOccurence
 deriveJSON defaultOptions 'HypeSkullRarityScore
 deriveJSON defaultOptions 'HypeSkullRank
 deriveJSON defaultOptions 'HypeSkull
 deriveJSON defaultOptions 'Main.Identity
+deriveJSON defaultOptions 'AssetAddress
+deriveJSON defaultOptions 'Address
+deriveJSON defaultOptions 'Asset
+deriveJSON defaultOptions 'DiscordIdt
 
 hypeRoles :: Map Text Word64
 hypeRoles = fromList [
@@ -112,6 +137,8 @@ main = do
     . runBotIO (BotToken token) allFlags
     $ do
       info @Text "Bot starting up!"
+      -- react @'GuildMemberUpdateEvt $ \(m1, m2) ->
+      --   when True $ info @Text $ "User update: " <> showt m1
       react @'MessageCreateEvt $ \(msg,_,_) -> 
         when False $
         void . invoke $ CreateReaction msg msg (UnicodeEmoji "😄")
@@ -161,6 +188,15 @@ main = do
                     <> policyId identity' 
                     <> "." 
                     <> assetName identity'
+                  let assetNameHex = toLower $ T.pack $ hex $ T.unpack $ assetName identity'
+                      idt = policyId identity' <> assetNameHex
+                  P.embed $ recordIdt (read $ T.unpack $ showt $ getID @User user) idt
+                  addr <- P.embed $ getUserAddress idt
+                  stakeAddr <- P.embed $ getStakeAddress addr
+                  void $ tell @Text ctx stakeAddr
+
+        command @'[] "test" $ \ctx -> do
+          void $ tell @Text ctx $ showt $ getID @User (ctx ^. #user)
 
         command @'[] "roles" $ \ctx -> do
           let guild = ctx ^. #guild
@@ -267,10 +303,62 @@ main = do
               getMembersInternal initialMembers g = do
                 invoke $ ListGuildMembers g $ ListMembersOptions (Just 1000) (Just $ getLastMemberSnowflake initialMembers)
 
+bfProjectId :: IO Text
+bfProjectId = do
+  str <- getEnv "BF_PROJECT_ID"
+  return $ pack str
+
+getUserAddress :: Text -> IO Text
+getUserAddress idt = do
+  bfProjectId' <- bfProjectId
+  runReq defaultHttpConfig $ do
+    let header' = header "project_id" $ encodeUtf8 bfProjectId'
+    r <- req GET ( https "cardano-mainnet.blockfrost.io" /: "api" /: "v0" /: "assets" /: idt /: "addresses" ) NoReqBody jsonResponse $ 
+      header'                     <> 
+      "order" =: ("desc" :: Text) <>
+      "limit" =: (1 :: Int)              
+    let addresses = responseBody r :: [AssetAddress]
+    return $ address $ head addresses
+
+getStakeAddress :: Text -> IO Text
+getStakeAddress addr = do
+  bfProjectId' <- bfProjectId
+  runReq defaultHttpConfig $ do
+    r <- req GET ( https "cardano-mainnet.blockfrost.io" /: "api" /: "v0" /: "addresses" /: addr ) NoReqBody jsonResponse $  
+      header "project_id" $ encodeUtf8 bfProjectId'   
+    let addr = responseBody r :: Address
+    return $ stake_address addr
+
+getAssets :: Text -> IO [Asset]
+getAssets addr = do
+  bfProjectId' <- bfProjectId
+  runReq defaultHttpConfig $ do
+    r <- req GET ( https "cardano-mainnet.blockfrost.io" /: "api" /: "v0" /: "accounts" /: addr /: "addresses" /: "assets" ) NoReqBody jsonResponse $  
+      header "project_id" $ encodeUtf8 bfProjectId'   
+    let assets = responseBody r :: [Asset]
+    return assets
+
+hsApiPassword :: IO Text
+hsApiPassword = do
+  str <- getEnv "HSAPI_PASSWORD"
+  return $ pack str
+
+recordIdt :: Int -> Text -> IO ()
+recordIdt user idt = do
+  hsApiPassword' <- hsApiPassword
+  runReq defaultHttpConfig $ do
+    let discordIdt = DiscordIdt {
+          discordId = user,
+          identityToken = idt
+    }
+    req POST ( https "hsapi-cka5aaecrq-uw.a.run.app" /: "api" /: "v1.0" /: "discord" ) (ReqBodyJson discordIdt) ignoreResponse $
+      header "api_password" $ encodeUtf8 hsApiPassword'   
+    return ()
+
 embedAuthAddr :: Text -> Embed
 embedAuthAddr addr = def
   & #title ?~ "Authenticate with your Identity Token"
-  & #description ?~ "Please send **1.2 $ADA** within **5 minutes** to the wallet address provided below. Your **1 $ADA** will be returned once authentication is complete."
+  & #description ?~ "123Please send **1.2 $ADA** within **5 minutes** to the wallet address provided below. Your **1 $ADA** will be returned once authentication is complete."
   & #fields .~ [
     EmbedField "AUTH ADDRESS" ("```" <> addr <> "```") True
   ]
