@@ -8,10 +8,10 @@ import           Calamity.Metrics.Noop
 import           Control.Lens
 import           Control.Monad
 import           Data.Default
-import           Data.Map (Map, fromList, (!), toList)
+import           Data.Map (Map, fromList, (!), toList, lookup)
 import           Data.Generics.Labels       ()
 import           Data.Maybe
-import           Data.Text                  (Text, pack, toUpper, splitOn, toLower)
+import           Data.Text                  (Text, pack, toUpper, splitOn, toLower, isInfixOf)
 import qualified Data.Text                  as T
 import qualified Di
 import           DiPolysemy
@@ -112,10 +112,10 @@ main = do
     . runBotIO (BotToken token) allFlags
     $ do
       info @Text "Bot starting up!"
-      react @'MessageCreateEvt $ \(msg,_,_) -> 
+      react @'MessageCreateEvt $ \(msg,_,_) ->
         when False $
         void . invoke $ CreateReaction msg msg (UnicodeEmoji "😄")
-      react @ 'ReadyEvt \_ -> 
+      react @ 'ReadyEvt \_ ->
         sendPresence $ StatusUpdateData Nothing (Just (Calamity.Types.Model.Presence.Activity.activity "H.Y.P.E." Game)) Online False
       addCommands $ do
         helpCommand
@@ -155,11 +155,11 @@ main = do
                 Nothing -> void $ tell @Text dmChannel "You have failed to authenticate at the given time. Please try again."
                 Just identity' -> do
                   let user = ctx ^. #user
-                  void $ tell @Text ctx $ mention user 
-                    <> " has successfully linked his IdentityToken.\n" 
-                    <> "https://cardanoscan.io/token/" 
-                    <> policyId identity' 
-                    <> "." 
+                  void $ tell @Text ctx $ mention user
+                    <> " has successfully linked his IdentityToken.\n"
+                    <> "https://cardanoscan.io/token/"
+                    <> policyId identity'
+                    <> "."
                     <> assetName identity'
 
         command @'[] "roles" $ \ctx -> do
@@ -239,7 +239,7 @@ main = do
                       members <- getMembers [] g
                       let memberIds = map (\m -> m ^. #id) members
                       info @Text $ "Purging roles from " <> showt (length memberIds) <> " members"
-                      mapM_ (\m -> 
+                      mapM_ (\m ->
                             mapM_ (\(k, v) -> do
                             info @Text $ "Removing role " <> showt k <> " from " <> showt m
                             void $ invoke $ RemoveGuildMemberRole g m (Snowflake v :: Snowflake Role)
@@ -254,8 +254,8 @@ main = do
                 members <- getMembersInternal initialMembers g
                 case members of
                   Left _ -> return initialMembers
-                  Right m -> 
-                    if length members < 1000 then return (initialMembers <> m) else do 
+                  Right m ->
+                    if length members < 1000 then return (initialMembers <> m) else do
                       getMembers (initialMembers <> m) g
 
               getLastMemberSnowflake :: [Member] -> Snowflake User
@@ -266,6 +266,62 @@ main = do
 
               getMembersInternal initialMembers g = do
                 invoke $ ListGuildMembers g $ ListMembersOptions (Just 1000) (Just $ getLastMemberSnowflake initialMembers)
+
+
+assignHypeRole guild user skulls = do
+  info @Text $ "Assigning hype role to " <> showt user
+  let roles = Prelude.foldr processSkull [] skulls
+  mapM_ (\role -> do
+      info @Text $ "Adding role " <> showt role
+      void $ assignRole role
+    ) roles
+  where
+
+    processSkull :: HypeSkull -> [Text] -> [Text]
+    processSkull skull roles
+      | isOnyx skull && notElem "Onyx" roles = "Onyx" : roles
+      | isBlackDiamond skull && notElem "Onyx" roles  = "Black Diamond" : roles
+      | isDiamond skull && notElem "Diamond" roles    = "Diamond" : roles
+      | isGold skull && notElem "Gold" roles          = "Gold" : roles
+      | isPearl skull && notElem "Pearl" roles        = "Pearl" : roles
+      | isPlatinum skull && notElem "Platinum" roles  = "Platinum" : roles
+      | isRoseGold skull && notElem "Rose Gold" roles = "Rose Gold" : roles
+      | otherwise = roles
+
+    -- isHolyGrail :: HypeSkull -> Bool
+    -- isHolyGrail skull = tokenRarityScore
+
+    isOnyx :: HypeSkull -> Bool
+    isOnyx skull = Main.skull skull `isInfixOf` "onyx"
+
+    isBlackDiamond :: HypeSkull -> Bool
+    isBlackDiamond skull = Main.skull skull `isInfixOf` "black diamond"
+
+    isDiamond :: HypeSkull -> Bool
+    isDiamond skull = Main.skull skull `isInfixOf` "diamond"
+
+    isGold :: HypeSkull -> Bool
+    isGold skull = Main.skull skull `isInfixOf` "gold"
+
+    isPearl :: HypeSkull -> Bool
+    isPearl skull = Main.skull skull `isInfixOf` "pearl"
+
+    isPlatinum :: HypeSkull -> Bool
+    isPlatinum skull = Main.skull skull `isInfixOf` "platinum"
+
+    isRoseGold :: HypeSkull -> Bool
+    isRoseGold skull = Main.skull skull `isInfixOf` "rose gold"
+
+    findRoleByKey :: Text -> Maybe Word64
+    findRoleByKey key = Data.Map.lookup key hypeRoles
+
+    assignRole roleKey = do
+      info @Text $ "Assigning " <> roleKey <> " role to " <> showt user
+      let role = findRoleByKey roleKey
+      case role of
+        Nothing -> info @Text "Role not found"
+        Just role -> do
+          void $ invoke $ AddGuildMemberRole guild user $ Snowflake role
 
 embedAuthAddr :: Text -> Embed
 embedAuthAddr addr = def
@@ -294,7 +350,7 @@ getIdentity addr retries = do
   case result of
     Right identity  -> do
       return $ Just identity
-    Left _          ->  
+    Left _          ->
       if retries >= maxRetries
       then return Nothing
       else do
