@@ -21,7 +21,7 @@ import Calamity.Gateway.Types (StatusUpdateData(StatusUpdateData), since, game, 
 import Data.Colour
 import Calamity.Internal.IntColour
 import Data.Word (Word64)
-import Network.HTTP.Req (req, https, GET (GET), (/:), jsonResponse, responseBody, runReq, defaultHttpConfig, NoReqBody (NoReqBody), (=:), responseStatusCode)
+import Network.HTTP.Req (req, https, GET (GET), (/:), jsonResponse, responseBody, runReq, defaultHttpConfig, NoReqBody (NoReqBody), (=:), responseStatusCode, JsonResponse)
 import Data.Aeson
 import Data.Aeson.TH
 import Control.Monad.IO.Class
@@ -30,8 +30,10 @@ import TextShow (TextShow(showt), fromString)
 import System.Environment (getEnv)
 import Data.ByteString.Lazy.UTF8 as BLU hiding (length, decode)
 import Calamity (Snowflake(fromSnowflake))
-import Control.Concurrent (threadDelay)
 import Data.Flags (BoundedFlags(allFlags))
+import Control.Exception (try, Exception, SomeException (SomeException))
+import Data.Semigroup (Any(Any))
+import Control.Concurrent ( threadDelay )
 
 newtype WalletAddress = WalletAddress {
   unWalletAddress :: Text
@@ -65,10 +67,20 @@ data HypeSkull = HypeSkull {
   tokenRarityScore :: Maybe HypeSkullRarityScore
 } deriving (Generic, Show, Eq)
 
+data Identity = Identity {
+  assetName :: Text,
+  avatar :: Text,
+  expiresIn :: Int,
+  key :: Text,
+  policyId :: Text,
+  username :: Text
+} deriving (Generic, Show, Eq)
+
 deriveJSON defaultOptions 'HypeSkullPropertyOccurence
 deriveJSON defaultOptions 'HypeSkullRarityScore
 deriveJSON defaultOptions 'HypeSkullRank
 deriveJSON defaultOptions 'HypeSkull
+deriveJSON defaultOptions 'Main.Identity
 
 hypeRoles :: Map Text Word64
 hypeRoles = fromList [
@@ -133,12 +145,23 @@ main = do
                     & #color ?~ rarityColor (Main.score skullRarity)
 
         command @'[] "idt" $ \ctx -> do
-          eitherDMC <- invoke $ CreateDM $ ctx ^. #message . #author
+          eitherDMC <- invoke $ CreateDM $ ctx ^. #user
           case eitherDMC of
             Left _ -> info @Text "DM Channel not found"
             Right dmChannel -> do
               addr <- P.embed requestAuthAddress
               void $ tell @Embed dmChannel $ embedAuthAddr addr
+              identity <- P.embed $ getIdentity addr 0
+              case identity of
+                Nothing -> void $ tell @Text dmChannel "You have failed to authenticate at the given time. Please try again."
+                Just identity' -> do
+                  let user = ctx ^. #user
+                  void $ tell @Text ctx $ mention user 
+                    <> " has successfully linked his IdentityToken.\n" 
+                    <> "https://cardanoscan.io/token/" 
+                    <> policyId identity' 
+                    <> "." 
+                    <> assetName identity'
 
         command @'[] "roles" $ \ctx -> do
           let guild = ctx ^. #guild
@@ -250,7 +273,7 @@ main = do
 embedAuthAddr :: Text -> Embed
 embedAuthAddr addr = def
   & #title ?~ "Authenticate with your Identity Token"
-  & #description ?~ "Please send 1.2 $ADA to the wallet address provided below. Your 1 $ADA will be returned once authentication is complete."
+  & #description ?~ "Please send **1.2 $ADA** within **5 minutes** to the wallet address provided below. Your **1 $ADA** will be returned once authentication is complete."
   & #fields .~ [
     EmbedField "AUTH ADDRESS" ("```" <> addr <> "```") True
   ]
@@ -261,6 +284,28 @@ requestAuthAddress = runReq defaultHttpConfig $ do
   r <- req GET ( https "api.identity.adaph.io" /: "identity" /: "auth" ) NoReqBody jsonResponse mempty
   let addr = responseBody r :: Text
   return addr
+
+queryIdentity :: Text -> IO Main.Identity
+queryIdentity addr = runReq defaultHttpConfig $ do
+  r <- req GET ( https "api.identity.adaph.io" /: "identity" /: "token" /: addr ) NoReqBody jsonResponse mempty
+  let identity = responseBody r :: Main.Identity
+  return identity
+
+getIdentity :: Text -> Int -> IO (Maybe Main.Identity)
+getIdentity addr retries = do
+  result <- try (queryIdentity addr) :: IO (Either SomeException Main.Identity)
+  case result of
+    Right identity  -> do
+      return $ Just identity
+    Left _          ->  
+      if retries >= maxRetries
+      then return Nothing
+      else do
+        threadDelay $ retryInterval * 1000 * 1000
+        getIdentity addr $ retries + 1
+    where
+      retryInterval = 20
+      maxRetries    = 15
 
 embedSkull :: Int -> HypeSkull -> Embed
 embedSkull skullID skull = def
