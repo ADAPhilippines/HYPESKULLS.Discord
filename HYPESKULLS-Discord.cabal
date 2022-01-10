@@ -42,6 +42,8 @@ executable HYPESKULLS-Discord
         , containers
         , utf8-string
         , hex
+        , time
+        , directory
 
     ghc-options:        -fplugin=Polysemy.Plugin -threaded
     hs-source-dirs:     app
@@ -62,3 +64,4 @@ executable HYPESKULLS-Discord
         DeriveGeneric
         TypeFamilies
         DeriveAnyClass
+        AllowAmbiguousTypes
