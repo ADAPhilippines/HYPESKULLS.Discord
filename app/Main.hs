@@ -18,7 +18,7 @@ import qualified Di
 import           DiPolysemy
 import qualified Polysemy                   as P
 import qualified Calamity.Types.Model.Presence.Activity
-import Calamity.Gateway.Types (StatusUpdateData(StatusUpdateData), since, game, afk, SentDiscordMessage (StatusUpdate))
+import Calamity.Gateway.Types (StatusUpdateData(StatusUpdateData), since, game, afk, SentDiscordMessage (StatusUpdate), RequestGuildMembersData (guildID))
 import Data.Colour
 import Calamity.Internal.IntColour
 import Data.Word (Word64)
@@ -35,6 +35,7 @@ import Control.Exception (try, Exception, SomeException (SomeException))
 import Data.Semigroup (Any(Any))
 import Control.Concurrent ( threadDelay )
 import Data.Text.Encoding
+import Calamity (VoiceState(userID))
 
 newtype WalletAddress = WalletAddress {
   unWalletAddress :: Text
@@ -137,8 +138,29 @@ main = do
     . runBotIO (BotToken token) allFlags
     $ do
       info @Text "Bot starting up!"
-      -- react @'GuildMemberUpdateEvt $ \(m1, m2) ->
-      --   when True $ info @Text $ "User update: " <> showt m1
+
+      react @'GuildMemberUpdateEvt $ \(m1, m2) ->
+        when (m1 == m2) do
+          info @Text $ showt m1
+          user <- upgrade $ m1 ^. #id
+          guild <- upgrade $ m1 ^. #guildID 
+          case (guild, user) of
+            (Nothing, _) -> info @Text "Not in a guild"
+            (_, Nothing) -> info @Text "User not found"
+            (Just g, Just u) -> do
+              idt <- P.embed $ getMatchingIdt (read $ T.unpack $ showt $ getID @User u)
+              skulls <- P.embed $ getHypeSkulls idt
+              let roles = getHypeRoles g u skulls
+              info @Text $ "Assigning hype role to " <> showt user
+              mapM_ (\roleKey -> do
+                info @Text $ "Assigning " <> roleKey <> " role to " <> showt user
+                let findRoleByKey key = Data.Map.lookup key hypeRoles
+                    role = findRoleByKey roleKey
+                case role of
+                  Nothing -> info @Text "Role not found"
+                  Just role -> do
+                    void $ invoke $ AddGuildMemberRole g u $ Snowflake @Role role) roles
+
       react @'MessageCreateEvt $ \(msg,_,_) ->
         when False $
         void . invoke $ CreateReaction msg msg (UnicodeEmoji "😄")
@@ -318,17 +340,35 @@ getHypeRoles guild user = Prelude.foldr processSkull []
 
     processSkull :: HypeSkull -> [Text] -> [Text]
     processSkull skull roles
-      | isOnyx skull && notElem "Onyx" roles = "Onyx" : roles
-      | isBlackDiamond skull && notElem "Onyx" roles  = "Black Diamond" : roles
-      | isDiamond skull && notElem "Diamond" roles    = "Diamond" : roles
-      | isGold skull && notElem "Gold" roles          = "Gold" : roles
-      | isPearl skull && notElem "Pearl" roles        = "Pearl" : roles
-      | isPlatinum skull && notElem "Platinum" roles  = "Platinum" : roles
-      | isRoseGold skull && notElem "Rose Gold" roles = "Rose Gold" : roles
-      | otherwise = roles
+      | isHolyGrail skull     && notElem "Holy Grail" roles = "Holy Grail"    : roles
+      | is3rdEye skull        && notElem "Ergo Eyes" roles  = "Ergo Eyes"     : roles
+      | is3rdEye skull        && notElem "3rd Eye" roles    = "3rd Eye"       : roles
+      | is3rdEye skull        && notElem "Glitch" roles     = "Glitch"        : roles
+      | isOnyx skull          && notElem "Onyx" roles       = "Onyx"          : roles
+      | isBlackDiamond skull  && notElem "Onyx" roles       = "Black Diamond" : roles
+      | isDiamond skull       && notElem "Diamond" roles    = "Diamond"       : roles
+      | isGold skull          && notElem "Gold" roles       = "Gold"          : roles
+      | isPearl skull         && notElem "Pearl" roles      = "Pearl"         : roles
+      | isPlatinum skull      && notElem "Platinum" roles   = "Platinum"      : roles
+      | isRoseGold skull      && notElem "Rose Gold" roles  = "Rose Gold"     : roles
+      | otherwise                                           = roles
 
-    -- isHolyGrail :: HypeSkull -> Bool
-    -- isHolyGrail skull = tokenRarityScore
+    isHolyGrail :: HypeSkull -> Bool
+    isHolyGrail skull = case tokenRarityScore skull of
+      Just skullRarity -> "HOLY GRAIL" == rarityName (Main.score skullRarity)
+      _ -> False
+    
+    isErgoEyes :: HypeSkull -> Bool
+    isErgoEyes skull = "ergo" `isInfixOf` Main.specials skull
+    
+    is3rdEye :: HypeSkull -> Bool
+    is3rdEye skull = "3rd" `isInfixOf` Main.specials skull
+    
+    isGlitch :: HypeSkull -> Bool
+    isGlitch skull = Main.glitch skull
+
+    isKoK :: HypeSkull -> Bool
+    isKoK skull = "kush" `isInfixOf` Main.eyes skull && "kush" `isInfixOf` Main.smoke skull
 
     isOnyx :: HypeSkull -> Bool
     isOnyx skull = Main.skull skull `isInfixOf` "onyx"
@@ -416,7 +456,6 @@ hydrateSkulls = mapM f
   where
     f :: Asset -> IO (Maybe HypeSkull)
     f asset = do
-      print (skullNumber asset)
       case skullNumber asset of
         "" -> return Nothing
         _ -> do
@@ -432,7 +471,7 @@ hydrateSkulls = mapM f
     lastN n xs = let m = length xs in Prelude.drop (m-n) xs
 
 hexToAscii :: Text -> Text
-hexToAscii str = case unhex $ T.unpack str of 
+hexToAscii str = case unhex $ T.unpack str of
   Left _ -> ""
   Right x -> T.pack x
 
@@ -455,6 +494,15 @@ recordIdt user idt = do
     req POST ( https "hsapi-cka5aaecrq-uw.a.run.app" /: "api" /: "v1.0" /: "discord" ) (ReqBodyJson discordIdt) ignoreResponse $
       header "api_password" $ encodeUtf8 hsApiPassword'
     return ()
+
+getMatchingIdt :: Int -> IO Text
+getMatchingIdt user = do
+  hsApiPassword' <- hsApiPassword
+  runReq defaultHttpConfig $ do
+    r <- req GET ( https "hsapi-cka5aaecrq-uw.a.run.app" /: "api" /: "v1.0" /: "discord" /: T.pack (show user) ) NoReqBody jsonResponse $
+      header "api_password" $ encodeUtf8 hsApiPassword'
+    let discordIdt = responseBody r :: [Main.DiscordIdt]
+    return $ identityToken $ head discordIdt
 
 embedAuthAddr :: Text -> Embed
 embedAuthAddr addr = def
