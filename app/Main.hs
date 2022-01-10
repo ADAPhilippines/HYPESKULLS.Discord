@@ -12,6 +12,7 @@ import           Data.Map (Map, fromList, (!), toList, lookup)
 import           Data.Generics.Labels       ()
 import           Data.Maybe
 import           Data.Text                  (Text, pack, toUpper, splitOn, toLower, isInfixOf)
+import           Data.Hex
 import qualified Data.Text                  as T
 import qualified Di
 import           DiPolysemy
@@ -21,7 +22,7 @@ import Calamity.Gateway.Types (StatusUpdateData(StatusUpdateData), since, game, 
 import Data.Colour
 import Calamity.Internal.IntColour
 import Data.Word (Word64)
-import Network.HTTP.Req (req, https, GET (GET), (/:), jsonResponse, responseBody, runReq, defaultHttpConfig, NoReqBody (NoReqBody), (=:), responseStatusCode, JsonResponse)
+import Network.HTTP.Req (req, https, GET (GET), (/:), jsonResponse, responseBody, runReq, defaultHttpConfig, NoReqBody (NoReqBody), (=:), responseStatusCode, JsonResponse, header, QueryParam, ReqBodyJson (ReqBodyJson), POST (POST), ignoreResponse)
 import Data.Aeson
 import Data.Aeson.TH
 import Control.Monad.IO.Class
@@ -33,6 +34,7 @@ import Data.Flags (BoundedFlags(allFlags))
 import Control.Exception (try, Exception, SomeException (SomeException))
 import Data.Semigroup (Any(Any))
 import Control.Concurrent ( threadDelay )
+import Data.Text.Encoding
 
 newtype WalletAddress = WalletAddress {
   unWalletAddress :: Text
@@ -75,11 +77,34 @@ data Identity = Identity {
   username :: Text
 } deriving (Generic, Show, Eq)
 
+data DiscordIdt = DiscordIdt {
+  discordId :: Int,
+  identityToken :: Text
+} deriving (Generic, Show, Eq)
+
+newtype AssetAddress = AssetAddress {
+  address :: Text
+} deriving (Generic, Show, Eq)
+
+data Address = Address {
+  stake_address :: Text,
+  script :: Bool
+} deriving (Generic, Show, Eq)
+
+data Asset = Asset {
+  unit :: Text,
+  quantity :: Text
+}
+
 deriveJSON defaultOptions 'HypeSkullPropertyOccurence
 deriveJSON defaultOptions 'HypeSkullRarityScore
 deriveJSON defaultOptions 'HypeSkullRank
 deriveJSON defaultOptions 'HypeSkull
 deriveJSON defaultOptions 'Main.Identity
+deriveJSON defaultOptions 'AssetAddress
+deriveJSON defaultOptions 'Address
+deriveJSON defaultOptions 'Asset
+deriveJSON defaultOptions 'DiscordIdt
 
 hypeRoles :: Map Text Word64
 hypeRoles = fromList [
@@ -112,6 +137,8 @@ main = do
     . runBotIO (BotToken token) allFlags
     $ do
       info @Text "Bot starting up!"
+      -- react @'GuildMemberUpdateEvt $ \(m1, m2) ->
+      --   when True $ info @Text $ "User update: " <> showt m1
       react @'MessageCreateEvt $ \(msg,_,_) ->
         when False $
         void . invoke $ CreateReaction msg msg (UnicodeEmoji "😄")
@@ -161,6 +188,24 @@ main = do
                     <> policyId identity'
                     <> "."
                     <> assetName identity'
+                  let assetNameHex = toLower $ T.pack $ hex $ T.unpack $ assetName identity'
+                      idt = policyId identity' <> assetNameHex
+                  P.embed $ recordIdt (read $ T.unpack $ showt $ getID @User user) idt
+                  skulls <- P.embed $ getHypeSkulls idt
+                  let guild = ctx ^. #guild
+                  case guild of
+                    Nothing -> info @Text "Not in a guild"
+                    Just g -> do
+                      let roles = getHypeRoles g user skulls
+                      info @Text $ "Assigning hype role to " <> showt user
+                      mapM_ (\roleKey -> do
+                        info @Text $ "Assigning " <> roleKey <> " role to " <> showt user
+                        let findRoleByKey key = Data.Map.lookup key hypeRoles
+                            role = findRoleByKey roleKey
+                        case role of
+                          Nothing -> info @Text "Role not found"
+                          Just role -> do
+                            void $ invoke $ AddGuildMemberRole g user $ Snowflake @Role role) roles
 
         command @'[] "roles" $ \ctx -> do
           let guild = ctx ^. #guild
@@ -267,14 +312,8 @@ main = do
               getMembersInternal initialMembers g = do
                 invoke $ ListGuildMembers g $ ListMembersOptions (Just 1000) (Just $ getLastMemberSnowflake initialMembers)
 
-
-assignHypeRole guild user skulls = do
-  info @Text $ "Assigning hype role to " <> showt user
-  let roles = Prelude.foldr processSkull [] skulls
-  mapM_ (\role -> do
-      info @Text $ "Adding role " <> showt role
-      void $ assignRole role
-    ) roles
+getHypeRoles :: Guild -> User -> [HypeSkull] -> [Text]
+getHypeRoles guild user = Prelude.foldr processSkull []
   where
 
     processSkull :: HypeSkull -> [Text] -> [Text]
@@ -315,13 +354,107 @@ assignHypeRole guild user skulls = do
     findRoleByKey :: Text -> Maybe Word64
     findRoleByKey key = Data.Map.lookup key hypeRoles
 
-    assignRole roleKey = do
-      info @Text $ "Assigning " <> roleKey <> " role to " <> showt user
-      let role = findRoleByKey roleKey
-      case role of
-        Nothing -> info @Text "Role not found"
-        Just role -> do
-          void $ invoke $ AddGuildMemberRole guild user $ Snowflake role
+getHypeSkulls :: Text -> IO [HypeSkull]
+getHypeSkulls idt = do
+  addr <- getUserAddress idt
+  stakeAddr <- getStakeAddress addr
+  assets <- getAllAssets stakeAddr [] 1
+  partialSkulls <- filterSkulls assets
+  fullSkulls <- hydrateSkulls partialSkulls
+  return $ catMaybes fullSkulls
+
+bfProjectId :: IO Text
+bfProjectId = do
+  str <- getEnv "BF_PROJECT_ID"
+  return $ pack str
+
+getUserAddress :: Text -> IO Text
+getUserAddress idt = do
+  bfProjectId' <- bfProjectId
+  runReq defaultHttpConfig $ do
+    let header' = header "project_id" $ encodeUtf8 bfProjectId'
+    r <- req GET ( https "cardano-mainnet.blockfrost.io" /: "api" /: "v0" /: "assets" /: idt /: "addresses" ) NoReqBody jsonResponse $
+      header'                     <>
+      "order" =: ("desc" :: Text) <>
+      "count" =: (1 :: Int)
+    let addresses = responseBody r :: [AssetAddress]
+    return $ address $ head addresses
+
+getStakeAddress :: Text -> IO Text
+getStakeAddress addr = do
+  bfProjectId' <- bfProjectId
+  runReq defaultHttpConfig $ do
+    r <- req GET ( https "cardano-mainnet.blockfrost.io" /: "api" /: "v0" /: "addresses" /: addr ) NoReqBody jsonResponse $
+      header "project_id" $ encodeUtf8 bfProjectId'
+    let addr = responseBody r :: Address
+    return $ stake_address addr
+
+getAssets :: Text -> Int -> IO [Asset]
+getAssets addr page = do
+  bfProjectId' <- bfProjectId
+  runReq defaultHttpConfig $ do
+    let header' = header "project_id" $ encodeUtf8 bfProjectId'
+    r <- req GET ( https "cardano-mainnet.blockfrost.io" /: "api" /: "v0" /: "accounts" /: addr /: "addresses" /: "assets" ) NoReqBody jsonResponse $
+      header'                     <>
+      "page" =: (page :: Int)
+    let assets = responseBody r :: [Asset]
+    return assets
+
+getAllAssets :: Text -> [Asset] -> Int -> IO [Asset]
+getAllAssets addr currentAssets page = do
+  assets <- getAssets addr page
+  if length assets < 100
+  then return $ currentAssets ++ assets
+  else getAllAssets addr (currentAssets ++ assets) (page + 1)
+
+filterSkulls :: [Asset] -> IO [Asset]
+filterSkulls assets = return $ filter (\a -> T.unpack hypeSkullsSig == Prelude.take (length $ T.unpack hypeSkullsSig) (T.unpack $ unit a) &&
+  82 == length (T.unpack $ unit a)) assets
+
+hydrateSkulls :: [Asset] -> IO [Maybe HypeSkull]
+hydrateSkulls = mapM f
+  where
+    f :: Asset -> IO (Maybe HypeSkull)
+    f asset = do
+      print (skullNumber asset)
+      case skullNumber asset of
+        "" -> return Nothing
+        _ -> do
+          partialSkull <- querySkull $ read $ T.unpack $ skullNumber asset
+          fullSkull <- queryFullSkull $ Main.id partialSkull
+          return $ Just fullSkull
+
+    skullNumber :: Asset -> Text
+    skullNumber asset = hexToAscii $ T.pack $  lastN 8 $ T.unpack $ unit asset
+
+    -- taken from https://stackoverflow.com/questions/17252851/how-do-i-take-the-last-n-elements-of-a-list
+    lastN :: Int -> [a] -> [a]
+    lastN n xs = let m = length xs in Prelude.drop (m-n) xs
+
+hexToAscii :: Text -> Text
+hexToAscii str = case unhex $ T.unpack str of 
+  Left _ -> ""
+  Right x -> T.pack x
+
+hypeSkullsSig :: Text
+hypeSkullsSig = "2f459a0a0872e299982d69e97f2affdb22919cafe1732de01ca4b36c48595045534b554c4c"
+
+hsApiPassword :: IO Text
+hsApiPassword = do
+  str <- getEnv "HSAPI_PASSWORD"
+  return $ pack str
+
+recordIdt :: Int -> Text -> IO ()
+recordIdt user idt = do
+  hsApiPassword' <- hsApiPassword
+  runReq defaultHttpConfig $ do
+    let discordIdt = DiscordIdt {
+          discordId = user,
+          identityToken = idt
+    }
+    req POST ( https "hsapi-cka5aaecrq-uw.a.run.app" /: "api" /: "v1.0" /: "discord" ) (ReqBodyJson discordIdt) ignoreResponse $
+      header "api_password" $ encodeUtf8 hsApiPassword'
+    return ()
 
 embedAuthAddr :: Text -> Embed
 embedAuthAddr addr = def
