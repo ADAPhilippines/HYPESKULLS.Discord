@@ -139,10 +139,10 @@ main = do
       info @Text "Bot starting up!"
       -- react @'GuildMemberUpdateEvt $ \(m1, m2) ->
       --   when True $ info @Text $ "User update: " <> showt m1
-      react @'MessageCreateEvt $ \(msg,_,_) -> 
+      react @'MessageCreateEvt $ \(msg,_,_) ->
         when False $
         void . invoke $ CreateReaction msg msg (UnicodeEmoji "😄")
-      react @ 'ReadyEvt \_ -> 
+      react @ 'ReadyEvt \_ ->
         sendPresence $ StatusUpdateData Nothing (Just (Calamity.Types.Model.Presence.Activity.activity "H.Y.P.E." Game)) Online False
       addCommands $ do
         helpCommand
@@ -182,21 +182,20 @@ main = do
                 Nothing -> void $ tell @Text dmChannel "You have failed to authenticate at the given time. Please try again."
                 Just identity' -> do
                   let user = ctx ^. #user
-                  void $ tell @Text ctx $ mention user 
-                    <> " has successfully linked his IdentityToken.\n" 
-                    <> "https://cardanoscan.io/token/" 
-                    <> policyId identity' 
-                    <> "." 
+                  void $ tell @Text ctx $ mention user
+                    <> " has successfully linked his IdentityToken.\n"
+                    <> "https://cardanoscan.io/token/"
+                    <> policyId identity'
+                    <> "."
                     <> assetName identity'
                   let assetNameHex = toLower $ T.pack $ hex $ T.unpack $ assetName identity'
                       idt = policyId identity' <> assetNameHex
                   P.embed $ recordIdt (read $ T.unpack $ showt $ getID @User user) idt
-                  addr <- P.embed $ getUserAddress idt
-                  stakeAddr <- P.embed $ getStakeAddress addr
-                  void $ tell @Text ctx stakeAddr
+                  skulls <- P.embed $ getHypeSkulls idt
+                  void $ tell @Text ctx $ showt $ length skulls
 
-        command @'[] "test" $ \ctx -> do
-          void $ tell @Text ctx $ showt $ getID @User (ctx ^. #user)
+                  
+
 
         command @'[] "roles" $ \ctx -> do
           let guild = ctx ^. #guild
@@ -275,7 +274,7 @@ main = do
                       members <- getMembers [] g
                       let memberIds = map (\m -> m ^. #id) members
                       info @Text $ "Purging roles from " <> showt (length memberIds) <> " members"
-                      mapM_ (\m -> 
+                      mapM_ (\m ->
                             mapM_ (\(k, v) -> do
                             info @Text $ "Removing role " <> showt k <> " from " <> showt m
                             void $ invoke $ RemoveGuildMemberRole g m (Snowflake v :: Snowflake Role)
@@ -290,8 +289,8 @@ main = do
                 members <- getMembersInternal initialMembers g
                 case members of
                   Left _ -> return initialMembers
-                  Right m -> 
-                    if length members < 1000 then return (initialMembers <> m) else do 
+                  Right m ->
+                    if length members < 1000 then return (initialMembers <> m) else do
                       getMembers (initialMembers <> m) g
 
               getLastMemberSnowflake :: [Member] -> Snowflake User
@@ -303,6 +302,15 @@ main = do
               getMembersInternal initialMembers g = do
                 invoke $ ListGuildMembers g $ ListMembersOptions (Just 1000) (Just $ getLastMemberSnowflake initialMembers)
 
+getHypeSkulls :: Text -> IO [HypeSkull]
+getHypeSkulls idt = do
+  addr <- getUserAddress idt
+  stakeAddr <- getStakeAddress addr
+  assets <- getAllAssets stakeAddr [] 1
+  partialSkulls <- filterSkulls assets
+  fullSkulls <- hydrateSkulls partialSkulls
+  return $ catMaybes fullSkulls
+
 bfProjectId :: IO Text
 bfProjectId = do
   str <- getEnv "BF_PROJECT_ID"
@@ -313,10 +321,10 @@ getUserAddress idt = do
   bfProjectId' <- bfProjectId
   runReq defaultHttpConfig $ do
     let header' = header "project_id" $ encodeUtf8 bfProjectId'
-    r <- req GET ( https "cardano-mainnet.blockfrost.io" /: "api" /: "v0" /: "assets" /: idt /: "addresses" ) NoReqBody jsonResponse $ 
-      header'                     <> 
+    r <- req GET ( https "cardano-mainnet.blockfrost.io" /: "api" /: "v0" /: "assets" /: idt /: "addresses" ) NoReqBody jsonResponse $
+      header'                     <>
       "order" =: ("desc" :: Text) <>
-      "limit" =: (1 :: Int)              
+      "count" =: (1 :: Int)
     let addresses = responseBody r :: [AssetAddress]
     return $ address $ head addresses
 
@@ -324,19 +332,60 @@ getStakeAddress :: Text -> IO Text
 getStakeAddress addr = do
   bfProjectId' <- bfProjectId
   runReq defaultHttpConfig $ do
-    r <- req GET ( https "cardano-mainnet.blockfrost.io" /: "api" /: "v0" /: "addresses" /: addr ) NoReqBody jsonResponse $  
-      header "project_id" $ encodeUtf8 bfProjectId'   
+    r <- req GET ( https "cardano-mainnet.blockfrost.io" /: "api" /: "v0" /: "addresses" /: addr ) NoReqBody jsonResponse $
+      header "project_id" $ encodeUtf8 bfProjectId'
     let addr = responseBody r :: Address
     return $ stake_address addr
 
-getAssets :: Text -> IO [Asset]
-getAssets addr = do
+getAssets :: Text -> Int -> IO [Asset]
+getAssets addr page = do
   bfProjectId' <- bfProjectId
   runReq defaultHttpConfig $ do
-    r <- req GET ( https "cardano-mainnet.blockfrost.io" /: "api" /: "v0" /: "accounts" /: addr /: "addresses" /: "assets" ) NoReqBody jsonResponse $  
-      header "project_id" $ encodeUtf8 bfProjectId'   
+    let header' = header "project_id" $ encodeUtf8 bfProjectId'
+    r <- req GET ( https "cardano-mainnet.blockfrost.io" /: "api" /: "v0" /: "accounts" /: addr /: "addresses" /: "assets" ) NoReqBody jsonResponse $
+      header'                     <>
+      "page" =: (page :: Int)
     let assets = responseBody r :: [Asset]
     return assets
+
+getAllAssets :: Text -> [Asset] -> Int -> IO [Asset]
+getAllAssets addr currentAssets page = do
+  assets <- getAssets addr page
+  if length assets < 100
+  then return $ currentAssets ++ assets
+  else getAllAssets addr (currentAssets ++ assets) (page + 1)
+
+filterSkulls :: [Asset] -> IO [Asset]
+filterSkulls assets = return $ filter (\a -> T.unpack hypeSkullsSig == Prelude.take (length $ T.unpack hypeSkullsSig) (T.unpack $ unit a) &&
+  82 == length (T.unpack $ unit a)) assets
+
+hydrateSkulls :: [Asset] -> IO [Maybe HypeSkull]
+hydrateSkulls = mapM f
+  where
+    f :: Asset -> IO (Maybe HypeSkull)
+    f asset = do
+      print (skullNumber asset)
+      case skullNumber asset of
+        "" -> return Nothing
+        _ -> do
+          partialSkull <- querySkull $ read $ T.unpack $ skullNumber asset
+          fullSkull <- queryFullSkull $ Main.id partialSkull
+          return $ Just fullSkull
+
+    skullNumber :: Asset -> Text
+    skullNumber asset = hexToAscii $ T.pack $  lastN 8 $ T.unpack $ unit asset
+
+    -- taken from https://stackoverflow.com/questions/17252851/how-do-i-take-the-last-n-elements-of-a-list
+    lastN :: Int -> [a] -> [a]
+    lastN n xs = let m = length xs in Prelude.drop (m-n) xs
+
+hexToAscii :: Text -> Text
+hexToAscii str = case unhex $ T.unpack str of 
+  Left _ -> ""
+  Right x -> T.pack x
+
+hypeSkullsSig :: Text
+hypeSkullsSig = "2f459a0a0872e299982d69e97f2affdb22919cafe1732de01ca4b36c48595045534b554c4c"
 
 hsApiPassword :: IO Text
 hsApiPassword = do
@@ -352,13 +401,13 @@ recordIdt user idt = do
           identityToken = idt
     }
     req POST ( https "hsapi-cka5aaecrq-uw.a.run.app" /: "api" /: "v1.0" /: "discord" ) (ReqBodyJson discordIdt) ignoreResponse $
-      header "api_password" $ encodeUtf8 hsApiPassword'   
+      header "api_password" $ encodeUtf8 hsApiPassword'
     return ()
 
 embedAuthAddr :: Text -> Embed
 embedAuthAddr addr = def
   & #title ?~ "Authenticate with your Identity Token"
-  & #description ?~ "123Please send **1.2 $ADA** within **5 minutes** to the wallet address provided below. Your **1 $ADA** will be returned once authentication is complete."
+  & #description ?~ "Please send **1.2 $ADA** within **5 minutes** to the wallet address provided below. Your **1 $ADA** will be returned once authentication is complete."
   & #fields .~ [
     EmbedField "AUTH ADDRESS" ("```" <> addr <> "```") True
   ]
@@ -382,7 +431,7 @@ getIdentity addr retries = do
   case result of
     Right identity  -> do
       return $ Just identity
-    Left _          ->  
+    Left _          ->
       if retries >= maxRetries
       then return Nothing
       else do
