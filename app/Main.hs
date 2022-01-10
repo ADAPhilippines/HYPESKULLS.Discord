@@ -39,6 +39,7 @@ import System.Directory
 import System.Environment (getEnv)
 import TextShow (TextShow (showt), fromString)
 import qualified Data.Generics.Product as Data.Generics.Product.Fields
+import Data.Vector.Unboxing (Vector, toList)
 
 newtype WalletAddress = WalletAddress
   { unWalletAddress :: Text
@@ -153,7 +154,7 @@ main = do
         info @Text "Bot starting up!"
 
         react @'GuildMemberUpdateEvt $ \(m1, m2) ->
-          when (m1 == m2) do 
+          when (m1 == m2) do
             info @Text "Guild Update"
             onGuildUpdate m1 m2
 
@@ -222,15 +223,6 @@ main = do
                     case guild of
                       Nothing -> info @Text "Not in a guild"
                       Just g -> do
-                        mapM_
-                          ( \(k, v) -> do
-                              info @Text $ "Removing role " <> showt k <> " from " <> showt user
-                              void $ invoke $ RemoveGuildMemberRole g user (Snowflake v :: Snowflake Role)
-                          )
-                          (toList hypeRoles :: [(Text, Word64)])
-
-                        P.embed $ threadDelay $ 1 * 1000 * 1000
-
                         let roles = getHypeRoles g user skulls
                         info @Text $ "Assigning hype role to " <> showt user
                         mapM_
@@ -242,8 +234,7 @@ main = do
                                 Nothing -> info @Text "Role not found"
                                 Just role -> do
                                   void $ invoke $ AddGuildMemberRole g user $ Snowflake @Role role
-                          )
-                          roles
+                          ) roles
 
           command @'[] "roles" $ \ctx -> do
             let guild = ctx ^. #guild
@@ -325,7 +316,7 @@ main = do
                                     info @Text $ "Removing role " <> showt k <> " from " <> showt m
                                     void $ invoke $ RemoveGuildMemberRole g m (Snowflake v :: Snowflake Role)
                                 )
-                                (toList hypeRoles :: [(Text, Word64)])
+                                (Data.Map.toList hypeRoles :: [(Text, Word64)])
                           )
                           memberIds
                         void $ reply @Text (ctx ^. #message) "Roles purged"
@@ -379,10 +370,11 @@ proceed m1 m2 = do
       idt <- P.embed $ getMatchingIdt (read $ T.unpack $ showt $ getID @User u)
       skulls <- P.embed $ getHypeSkulls idt
 
-      mapM_ (\(k, v) -> do
-          info @Text $ "Removing role " <> showt k <> " from " <> showt m1
-          void $ invoke $ RemoveGuildMemberRole g u (Snowflake v :: Snowflake Role)
-        ) (toList hypeRoles :: [(Text, Word64)])
+      let userRoles = (m1 ^. #roles) :: Vector (Snowflake Role)
+      mapM_ (\r -> do
+          info @Text $ "Removing role " <> showt r <> " from " <> showt m1
+          void $ invoke $ RemoveGuildMemberRole g u r
+        ) (Data.Vector.Unboxing.toList userRoles :: [Snowflake Role])
 
       P.embed $ threadDelay $ 1 * 1000 * 1000
 
