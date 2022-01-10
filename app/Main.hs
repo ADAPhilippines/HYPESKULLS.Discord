@@ -367,31 +367,34 @@ proceed m1 m2 = do
     (_, Nothing) -> info @Text "User not found"
     (Just g, Just u) -> do
       info @Text $ "Processing User Role: " <> showt u
-      idt <- P.embed $ getMatchingIdt (read $ T.unpack $ showt $ getID @User u)
-      skulls <- P.embed $ getHypeSkulls idt
+      idt <- P.embed $ tryGetMatchingIdt (read $ T.unpack $ showt $ getID @User u)
+      case idt of
+        Nothing -> info @Text "No matching record"
+        Just idt' -> do
+          skulls <- P.embed $ getHypeSkulls idt'
 
-      let userRoles = (m1 ^. #roles) :: Vector (Snowflake Role)
-      mapM_ (\r -> do
-          if fromSnowflake r `elem` elems hypeRoles 
-            then do
-              info @Text $ "Removing role " <> showt r <> " from " <> showt m1
-              void $ invoke $ RemoveGuildMemberRole g u r 
-            else
-              info @Text $ "Invalid role to remove."
-        ) (Data.Vector.Unboxing.toList userRoles :: [Snowflake Role])
+          let userRoles = (m1 ^. #roles) :: Vector (Snowflake Role)
+          mapM_ (\r -> do
+              if fromSnowflake r `elem` elems hypeRoles 
+                then do
+                  info @Text $ "Removing role " <> showt r <> " from " <> showt m1
+                  void $ invoke $ RemoveGuildMemberRole g u r 
+                else
+                  info @Text $ "Invalid role to remove."
+            ) (Data.Vector.Unboxing.toList userRoles :: [Snowflake Role])
 
-      P.embed $ threadDelay $ 1 * 1000 * 1000
+          P.embed $ threadDelay $ 1 * 1000 * 1000
 
-      let roles = getHypeRoles g u skulls
-      info @Text $ "Assigning hype role to " <> showt user
-      mapM_ (\roleKey -> do
-        info @Text $ "Assigning " <> roleKey <> " role to " <> showt user
-        let findRoleByKey key = Data.Map.lookup key hypeRoles
-            role = findRoleByKey roleKey
-        case role of
-          Nothing -> info @Text "Role not found"
-          Just role -> do
-            void $ invoke $ AddGuildMemberRole g u $ Snowflake @Role role) roles
+          let roles = getHypeRoles g u skulls
+          info @Text $ "Assigning hype role to " <> showt user
+          mapM_ (\roleKey -> do
+            info @Text $ "Assigning " <> roleKey <> " role to " <> showt user
+            let findRoleByKey key = Data.Map.lookup key hypeRoles
+                role = findRoleByKey roleKey
+            case role of
+              Nothing -> info @Text "Role not found"
+              Just role -> do
+                void $ invoke $ AddGuildMemberRole g u $ Snowflake @Role role) roles
 
 getHypeRoles :: Guild -> User -> [HypeSkull] -> [Text]
 getHypeRoles guild user = Prelude.foldr processSkull []
@@ -576,6 +579,13 @@ getMatchingIdt user = do
         header "api_password" $ encodeUtf8 hsApiPassword'
     let discordIdt = responseBody r :: [Main.DiscordIdt]
     return $ identityToken $ head discordIdt
+
+tryGetMatchingIdt :: Int -> IO (Maybe Text)
+tryGetMatchingIdt user = do
+  result <- try (getMatchingIdt user) :: IO (Either SomeException Text)
+  case result of
+    Left _ -> return Nothing
+    Right idt -> return $ Just idt
 
 embedAuthAddr :: Text -> Embed
 embedAuthAddr addr =
