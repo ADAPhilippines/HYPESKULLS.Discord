@@ -341,9 +341,9 @@ getHypeRoles guild user = Prelude.foldr processSkull []
     processSkull :: HypeSkull -> [Text] -> [Text]
     processSkull skull roles
       | isHolyGrail skull     && notElem "Holy Grail" roles = "Holy Grail"    : roles
-      | is3rdEye skull        && notElem "Ergo Eyes" roles  = "Ergo Eyes"     : roles
+      | isErgoEyes skull      && notElem "Ergo Eyes" roles  = "Ergo Eyes"     : roles
       | is3rdEye skull        && notElem "3rd Eye" roles    = "3rd Eye"       : roles
-      | is3rdEye skull        && notElem "Glitch" roles     = "Glitch"        : roles
+      | isGlitch skull        && notElem "Glitch" roles     = "Glitch"        : roles
       | isOnyx skull          && notElem "Onyx" roles       = "Onyx"          : roles
       | isBlackDiamond skull  && notElem "Onyx" roles       = "Black Diamond" : roles
       | isDiamond skull       && notElem "Diamond" roles    = "Diamond"       : roles
