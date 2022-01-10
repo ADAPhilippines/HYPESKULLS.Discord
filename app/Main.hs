@@ -150,6 +150,12 @@ main = do
             (Just g, Just u) -> do
               idt <- P.embed $ getMatchingIdt (read $ T.unpack $ showt $ getID @User u)
               skulls <- P.embed $ getHypeSkulls idt
+
+              mapM_ (\(k, v) -> do
+                  info @Text $ "Removing role " <> showt k <> " from " <> showt m1
+                  void $ invoke $ RemoveGuildMemberRole g m1 (Snowflake v :: Snowflake Role)
+                ) (toList hypeRoles :: [(Text, Word64)])
+
               let roles = getHypeRoles g u skulls
               info @Text $ "Assigning hype role to " <> showt user
               mapM_ (\roleKey -> do
@@ -218,6 +224,12 @@ main = do
                   case guild of
                     Nothing -> info @Text "Not in a guild"
                     Just g -> do
+
+                      mapM_ (\(k, v) -> do
+                          info @Text $ "Removing role " <> showt k <> " from " <> showt user
+                          void $ invoke $ RemoveGuildMemberRole g user (Snowflake v :: Snowflake Role)
+                        ) (toList hypeRoles :: [(Text, Word64)])
+
                       let roles = getHypeRoles g user skulls
                       info @Text $ "Assigning hype role to " <> showt user
                       mapM_ (\roleKey -> do
@@ -340,18 +352,19 @@ getHypeRoles guild user = Prelude.foldr processSkull []
 
     processSkull :: HypeSkull -> [Text] -> [Text]
     processSkull skull roles
-      | isHolyGrail skull     && notElem "Holy Grail" roles = "Holy Grail"    : roles
-      | isErgoEyes skull      && notElem "Ergo Eyes" roles  = "Ergo Eyes"     : roles
-      | is3rdEye skull        && notElem "3rd Eye" roles    = "3rd Eye"       : roles
-      | isGlitch skull        && notElem "Glitch" roles     = "Glitch"        : roles
-      | isOnyx skull          && notElem "Onyx" roles       = "Onyx"          : roles
-      | isBlackDiamond skull  && notElem "Onyx" roles       = "Black Diamond" : roles
-      | isDiamond skull       && notElem "Diamond" roles    = "Diamond"       : roles
-      | isGold skull          && notElem "Gold" roles       = "Gold"          : roles
-      | isPearl skull         && notElem "Pearl" roles      = "Pearl"         : roles
-      | isPlatinum skull      && notElem "Platinum" roles   = "Platinum"      : roles
-      | isRoseGold skull      && notElem "Rose Gold" roles  = "Rose Gold"     : roles
-      | otherwise                                           = roles
+      | isHolyGrail skull     && notElem "Holy Grail" roles     = "Holy Grail"    : roles
+      | isErgoEyes skull      && notElem "Ergo Eyes" roles      = "Ergo Eyes"     : roles
+      | is3rdEye skull        && notElem "3rd Eye" roles        = "3rd Eye"       : roles
+      | isGlitch skull        && notElem "Glitch" roles         = "Glitch"        : roles
+      | isKoK skull           && notElem "KoK" roles            = "KoK"           : roles
+      | isOnyx skull          && notElem "Onyx" roles           = "Onyx"          : roles
+      | isBlackDiamond skull  && notElem "Black Diamond" roles  = "Black Diamond" : roles
+      | isDiamond skull       && notElem "Diamond" roles        = "Diamond"       : roles
+      | isGold skull          && notElem "Gold" roles           = "Gold"          : roles
+      | isPearl skull         && notElem "Pearl" roles          = "Pearl"         : roles
+      | isPlatinum skull      && notElem "Platinum" roles       = "Platinum"      : roles
+      | isRoseGold skull      && notElem "Rose Gold" roles      = "Rose Gold"     : roles
+      | otherwise                                               = roles
 
     isHolyGrail :: HypeSkull -> Bool
     isHolyGrail skull = case tokenRarityScore skull of
@@ -371,25 +384,25 @@ getHypeRoles guild user = Prelude.foldr processSkull []
     isKoK skull = "kush" `isInfixOf` Main.eyes skull && "kush" `isInfixOf` Main.smoke skull
 
     isOnyx :: HypeSkull -> Bool
-    isOnyx skull = Main.skull skull `isInfixOf` "onyx"
+    isOnyx skull = "onyx" == Main.skull skull 
 
     isBlackDiamond :: HypeSkull -> Bool
-    isBlackDiamond skull = Main.skull skull `isInfixOf` "black diamond"
+    isBlackDiamond skull =  "black diamond" == Main.skull skull
 
     isDiamond :: HypeSkull -> Bool
-    isDiamond skull = Main.skull skull `isInfixOf` "diamond"
+    isDiamond skull = "diamond" == Main.skull skull
 
     isGold :: HypeSkull -> Bool
-    isGold skull = Main.skull skull `isInfixOf` "gold"
+    isGold skull = "gold" == Main.skull skull 
 
     isPearl :: HypeSkull -> Bool
-    isPearl skull = Main.skull skull `isInfixOf` "pearl"
+    isPearl skull = "pearl" == Main.skull skull
 
     isPlatinum :: HypeSkull -> Bool
-    isPlatinum skull = Main.skull skull `isInfixOf` "platinum"
+    isPlatinum skull = "platinum" == Main.skull skull 
 
     isRoseGold :: HypeSkull -> Bool
-    isRoseGold skull = Main.skull skull `isInfixOf` "rose gold"
+    isRoseGold skull = "rose gold" == Main.skull skull
 
     findRoleByKey :: Text -> Maybe Word64
     findRoleByKey key = Data.Map.lookup key hypeRoles
