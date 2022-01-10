@@ -22,7 +22,7 @@ import Data.Default
 import Data.Flags (BoundedFlags (allFlags))
 import Data.Generics.Labels ()
 import Data.Hex
-import Data.Map (Map, fromList, lookup, toList, (!))
+import Data.Map (Map, fromList, lookup, toList, (!), elems)
 import Data.Maybe
 import Data.Semigroup (Any (Any))
 import Data.Text (Text, isInfixOf, pack, splitOn, toLower, toUpper)
@@ -372,8 +372,12 @@ proceed m1 m2 = do
 
       let userRoles = (m1 ^. #roles) :: Vector (Snowflake Role)
       mapM_ (\r -> do
-          info @Text $ "Removing role " <> showt r <> " from " <> showt m1
-          void $ invoke $ RemoveGuildMemberRole g u r
+          if fromSnowflake r `elem` elems hypeRoles 
+            then do
+              info @Text $ "Removing role " <> showt r <> " from " <> showt m1
+              void $ invoke $ RemoveGuildMemberRole g u r 
+            else
+              info @Text $ "Invalid role to remove."
         ) (Data.Vector.Unboxing.toList userRoles :: [Snowflake Role])
 
       P.embed $ threadDelay $ 1 * 1000 * 1000
