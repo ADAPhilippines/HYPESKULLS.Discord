@@ -233,6 +233,7 @@ main = do
                               case role of
                                 Nothing -> info @Text "Role not found"
                                 Just role -> do
+                                  void $ P.embed $ threadDelay $ 1 * 1000 * 100
                                   void $ invoke $ AddGuildMemberRole g user $ Snowflake @Role role
                           ) roles
 
@@ -378,6 +379,7 @@ proceed m1 m2 = do
               if fromSnowflake r `elem` elems hypeRoles 
                 then do
                   info @Text $ "Removing role " <> showt r <> " from " <> showt m1
+                  void $ P.embed $ threadDelay $ 1 * 1000 * 100
                   void $ invoke $ RemoveGuildMemberRole g u r 
                 else
                   info @Text $ "Invalid role to remove."
@@ -394,6 +396,7 @@ proceed m1 m2 = do
             case role of
               Nothing -> info @Text "Role not found"
               Just role -> do
+                void $ P.embed $ threadDelay $ 1 * 1000 * 100
                 void $ invoke $ AddGuildMemberRole g u $ Snowflake @Role role) roles
 
 getHypeRoles :: Guild -> User -> [HypeSkull] -> [Text]
