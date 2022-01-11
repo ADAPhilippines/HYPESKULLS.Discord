@@ -237,6 +237,9 @@ main = do
                                   void $ invoke $ AddGuildMemberRole g user $ Snowflake @Role role
                           ) roles
 
+          command @'[Member] "refreshRoles" $ \ctx member -> do
+            refreshRoles member member
+          
           command @'[] "roles" $ \ctx -> do
             let guild = ctx ^. #guild
             case guild of
@@ -350,16 +353,18 @@ onGuildUpdate m1 m2 =  do
       lastTime <- P.embed $ readFile $ userTmpFile m1
       currentTimePOSIX <- P.embed getPOSIXTime
       let lastTimePOSIX = read lastTime :: POSIXTime
-      if currentTimePOSIX - lastTimePOSIX > (read "30s" :: POSIXTime) then
-        proceed m1 m2
+      if currentTimePOSIX - lastTimePOSIX > (read "86400s" :: POSIXTime) 
+      then do
+        void $ P.embed $ writeFile (userTmpFile m1) $ show currentTimePOSIX
+        refreshRoles m1 m2
       else
         info @Text $ "Ignoring update for " <> showt (fromSnowflake (m1 ^. #id))
     else do
       time <- P.embed getPOSIXTime
       void $ P.embed $ writeFile (userTmpFile m1) $ show time
-      proceed m1 m2
+      refreshRoles m1 m2
 
-proceed m1 m2 = do
+refreshRoles m1 m2 = do
   info @Text $ showt m1
   user <- upgrade $ m1 ^. #id
   guild <- upgrade $ m1 ^. #guildID
