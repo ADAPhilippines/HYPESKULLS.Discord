@@ -485,15 +485,18 @@ getHypeSkulls idt = do
   fullSkulls <- hydrateSkulls partialSkulls
   return $ catMaybes fullSkulls
 
-getSkullList :: Text -> IO [(Text, HypeSkull)]
+getSkullList :: Text -> IO [(Text, HypeSkull, Int)]
 getSkullList idt = do
   addr <- getUserAddress idt
   stakeAddr <- getStakeAddress addr
   assets <- getAllAssets stakeAddr [] 1
   skullAssets <- filterSkulls assets
-  fullSkullsMaybe <- hydrateSkulls skullAssets
-  let assetNameMaybes  = [ getAssetName partialSkull | partialSkull <- skullAssets]
-  return $ zip (catMaybes assetNameMaybes) $ catMaybes fullSkullsMaybe
+  fullSkullMaybes <- hydrateSkulls skullAssets
+  let fullSkulls = catMaybes fullSkullMaybes
+  skullRankingMaybes <- getSkullRankings fullSkulls
+  let skullRankings = catMaybes skullRankingMaybes
+  let skullNames  = catMaybes [ getAssetName partialSkull | partialSkull <- skullAssets]
+  return $ zip3 skullNames fullSkulls skullRankings
 
 getAssetName :: Asset -> Maybe Text
 getAssetName a = case eitherName a of
@@ -558,6 +561,17 @@ filterSkulls assets =
             && 82 == length (T.unpack $ unit a)
       )
       assets
+
+getSkullRankings :: [HypeSkull] -> IO [Maybe Int]
+getSkullRankings = mapM f
+  where
+    f :: HypeSkull -> IO (Maybe Int)
+    f skull = do
+      case tokenRarityScore skull of
+        Nothing -> return Nothing
+        Just rScore -> do
+          skullRank <- querySkullRank $ Main.score rScore
+          return $ Just $ rank skullRank
 
 hydrateSkulls :: [Asset] -> IO [Maybe HypeSkull]
 hydrateSkulls = mapM f
@@ -659,11 +673,15 @@ getIdentity addr retries = do
     retryInterval = 20
     maxRetries = 15
 
-embedSkullList :: Text -> [(Text, HypeSkull)] -> Embed
+embedSkullList :: Text -> [(Text, HypeSkull, Int)] -> Embed
 embedSkullList username skulls =
   def
     & #title ?~ username <> "'s HYPESKULLS"
-    & #fields .~ [EmbedField ("```" <> n <> "```") ("https://seehype.com/explore/" <> Main.id s) False | (n,s) <- skulls]
+    & #fields .~ [EmbedField ("```" <> n <> " [" <> rarity s <> " #" <> T.pack (show r) <> "]" <> "```") ("https://seehype.com/explore/" <> Main.id s) False | (n,s,r) <- skulls]
+    where
+      rarity s = case tokenRarityScore s of
+        Nothing -> ""
+        Just rarity' -> rarityName $ score rarity' 
 
 embedSkull :: Int -> HypeSkull -> Embed
 embedSkull skullID skull =
