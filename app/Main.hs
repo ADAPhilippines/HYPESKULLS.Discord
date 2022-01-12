@@ -236,6 +236,15 @@ main = do
                                   void $ P.embed $ threadDelay $ 1 * 1000 * 100
                                   void $ invoke $ AddGuildMemberRole g user $ Snowflake @Role role
                           ) roles
+          
+          command @'[] "myskulls" $ \ctx -> do
+            let user = ctx ^. #user
+            idt <- P.embed $ tryGetMatchingIdt (read $ T.unpack $ showt $ getID @User user)
+            case idt of
+              Nothing -> void $ reply @Text (ctx ^. #message) "Identity token not linked."
+              Just idt' -> do
+                skulls <- P.embed $ getSkullList idt'
+                void $ tell @Embed ctx $ embedSkullList (user ^. #username) skulls
 
           command @'[Member] "refreshRoles" $ \ctx member -> do
             refreshRoles member member
@@ -476,6 +485,23 @@ getHypeSkulls idt = do
   fullSkulls <- hydrateSkulls partialSkulls
   return $ catMaybes fullSkulls
 
+getSkullList :: Text -> IO [(Text, HypeSkull)]
+getSkullList idt = do
+  addr <- getUserAddress idt
+  stakeAddr <- getStakeAddress addr
+  assets <- getAllAssets stakeAddr [] 1
+  skullAssets <- filterSkulls assets
+  fullSkullsMaybe <- hydrateSkulls skullAssets
+  let assetNameMaybes  = [ getAssetName partialSkull | partialSkull <- skullAssets]
+  return $ zip (catMaybes assetNameMaybes) $ catMaybes fullSkullsMaybe
+
+getAssetName :: Asset -> Maybe Text
+getAssetName a = case eitherName a of
+  Left _ -> Nothing 
+  Right n -> Just $ T.pack n
+  where 
+    eitherName a = unhex $ Prelude.drop 56 $ T.unpack $ unit a
+
 bfProjectId :: IO Text
 bfProjectId = do
   str <- getEnv "BF_PROJECT_ID"
@@ -632,6 +658,12 @@ getIdentity addr retries = do
   where
     retryInterval = 20
     maxRetries = 15
+
+embedSkullList :: Text -> [(Text, HypeSkull)] -> Embed
+embedSkullList username skulls =
+  def
+    & #title ?~ username <> "'s HYPESKULLS"
+    & #fields .~ [EmbedField ("```" <> n <> "```") ("https://seehype.com/explore/" <> Main.id s) False | (n,s) <- skulls]
 
 embedSkull :: Int -> HypeSkull -> Embed
 embedSkull skullID skull =
