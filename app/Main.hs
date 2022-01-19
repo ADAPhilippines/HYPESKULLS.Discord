@@ -195,7 +195,7 @@ main = do
                           & #fields .~ (EmbedField "RARITY" ("```" <> rarityName (Main.score skullRarity) <> " #" <> T.pack (show $ Main.rank skullRank) <> "```") True : fields)
                           & #color ?~ rarityColor (Main.score skullRarity)
 
-          command @'[] "idt" $ \ctx -> do
+          command @'[] "idt12345" $ \ctx -> do
             eitherDMC <- invoke $ CreateDM $ ctx ^. #user
             case eitherDMC of
               Left _ -> info @Text "DM Channel not found"
@@ -639,7 +639,7 @@ embedAuthAddr :: Text -> Embed
 embedAuthAddr addr =
   def
     & #title ?~ "Authenticate with your Identity Token"
-    & #description ?~ "Please send **1.2 $ADA** within **5 minutes** to the wallet address provided below. Your **1 $ADA** will be returned once authentication is complete."
+    & #description ?~ "Please send **1.2 $ADA** within **20 minutes** to the wallet address provided below. Your **1 $ADA** will be returned once authentication is complete."
     & #fields
       .~ [ EmbedField "AUTH ADDRESS" ("```" <> addr <> "```") True
          ]
@@ -671,7 +671,7 @@ getIdentity addr retries = do
           getIdentity addr $ retries + 1
   where
     retryInterval = 20
-    maxRetries = 15
+    maxRetries = 60
 
 embedSkullList :: Text -> [(Text, HypeSkull, Int)] -> Embed
 embedSkullList username skulls =
