@@ -195,7 +195,7 @@ main = do
                           & #fields .~ (EmbedField "RARITY" ("```" <> rarityName (Main.score skullRarity) <> " #" <> T.pack (show $ Main.rank skullRank) <> "```") True : fields)
                           & #color ?~ rarityColor (Main.score skullRarity)
 
-          command @'[] "idt12345" $ \ctx -> do
+          command @'[] "idt" $ \ctx -> do
             eitherDMC <- invoke $ CreateDM $ ctx ^. #user
             case eitherDMC of
               Left _ -> info @Text "DM Channel not found"
