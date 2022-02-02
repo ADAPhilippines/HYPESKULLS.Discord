@@ -677,7 +677,7 @@ embedSkullList :: Text -> [(Text, HypeSkull, Int)] -> Embed
 embedSkullList username skulls =
   def
     & #title ?~ username <> "'s HYPESKULLS"
-    & #fields .~ [EmbedField ("```" <> n <> " [" <> rarity s <> " #" <> T.pack (show r) <> "]" <> "```") ("https://seehype.com/explore/" <> Main.id s) False | (n,s,r) <- skulls]
+    & #fields .~ [EmbedField ("```" <> n <> " [" <> rarity s <> " #" <> T.pack (show r) <> "]" <> "```") ("https://old.seehype.com/explore/" <> Main.id s) False | (n,s,r) <- skulls]
     where
       rarity s = case tokenRarityScore s of
         Nothing -> ""
