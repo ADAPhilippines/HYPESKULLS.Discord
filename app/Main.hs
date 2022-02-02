@@ -639,7 +639,7 @@ embedAuthAddr :: Text -> Embed
 embedAuthAddr addr =
   def
     & #title ?~ "Authenticate with your Identity Token"
-    & #description ?~ "Please send **1.2 $ADA** within **60 minutes** to the wallet address provided below. Your **1 $ADA** will be returned once authentication is complete."
+    & #description ?~ "Please send **1.2 $ADA** within **2 hours** to the wallet address provided below. Your **1 $ADA** will be returned once authentication is complete."
     & #fields
       .~ [ EmbedField "AUTH ADDRESS" ("```" <> addr <> "```") True
          ]
@@ -670,7 +670,7 @@ getIdentity addr retries = do
           threadDelay $ retryInterval * 1000 * 1000
           getIdentity addr $ retries + 1
   where
-    retryInterval = 60
+    retryInterval = 60 * 2
     maxRetries = 60
 
 embedSkullList :: Text -> [(Text, HypeSkull, Int)] -> Embed
