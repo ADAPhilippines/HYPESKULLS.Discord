@@ -236,7 +236,19 @@ main = do
                                   void $ P.embed $ threadDelay $ 1 * 1000 * 100
                                   void $ invoke $ AddGuildMemberRole g user $ Snowflake @Role role
                           ) roles
+          
+          command @'[] "myskulls" $ \ctx -> do
+            let user = ctx ^. #user
+            idt <- P.embed $ tryGetMatchingIdt (read $ T.unpack $ showt $ getID @User user)
+            case idt of
+              Nothing -> void $ reply @Text (ctx ^. #message) "Identity token not linked."
+              Just idt' -> do
+                skulls <- P.embed $ getSkullList idt'
+                void $ tell @Embed ctx $ embedSkullList (user ^. #username) skulls
 
+          command @'[Member] "refreshRoles" $ \ctx member -> do
+            refreshRoles member member
+          
           command @'[] "roles" $ \ctx -> do
             let guild = ctx ^. #guild
             case guild of
@@ -350,16 +362,18 @@ onGuildUpdate m1 m2 =  do
       lastTime <- P.embed $ readFile $ userTmpFile m1
       currentTimePOSIX <- P.embed getPOSIXTime
       let lastTimePOSIX = read lastTime :: POSIXTime
-      if currentTimePOSIX - lastTimePOSIX > (read "30s" :: POSIXTime) then
-        proceed m1 m2
+      if currentTimePOSIX - lastTimePOSIX > (read "86400s" :: POSIXTime) 
+      then do
+        void $ P.embed $ writeFile (userTmpFile m1) $ show currentTimePOSIX
+        refreshRoles m1 m2
       else
         info @Text $ "Ignoring update for " <> showt (fromSnowflake (m1 ^. #id))
     else do
       time <- P.embed getPOSIXTime
       void $ P.embed $ writeFile (userTmpFile m1) $ show time
-      proceed m1 m2
+      refreshRoles m1 m2
 
-proceed m1 m2 = do
+refreshRoles m1 m2 = do
   info @Text $ showt m1
   user <- upgrade $ m1 ^. #id
   guild <- upgrade $ m1 ^. #guildID
@@ -471,6 +485,26 @@ getHypeSkulls idt = do
   fullSkulls <- hydrateSkulls partialSkulls
   return $ catMaybes fullSkulls
 
+getSkullList :: Text -> IO [(Text, HypeSkull, Int)]
+getSkullList idt = do
+  addr <- getUserAddress idt
+  stakeAddr <- getStakeAddress addr
+  assets <- getAllAssets stakeAddr [] 1
+  skullAssets <- filterSkulls assets
+  fullSkullMaybes <- hydrateSkulls skullAssets
+  let fullSkulls = catMaybes fullSkullMaybes
+  skullRankingMaybes <- getSkullRankings fullSkulls
+  let skullRankings = catMaybes skullRankingMaybes
+  let skullNames  = catMaybes [ getAssetName partialSkull | partialSkull <- skullAssets]
+  return $ zip3 skullNames fullSkulls skullRankings
+
+getAssetName :: Asset -> Maybe Text
+getAssetName a = case eitherName a of
+  Left _ -> Nothing 
+  Right n -> Just $ T.pack n
+  where 
+    eitherName a = unhex $ Prelude.drop 56 $ T.unpack $ unit a
+
 bfProjectId :: IO Text
 bfProjectId = do
   str <- getEnv "BF_PROJECT_ID"
@@ -527,6 +561,17 @@ filterSkulls assets =
             && 82 == length (T.unpack $ unit a)
       )
       assets
+
+getSkullRankings :: [HypeSkull] -> IO [Maybe Int]
+getSkullRankings = mapM f
+  where
+    f :: HypeSkull -> IO (Maybe Int)
+    f skull = do
+      case tokenRarityScore skull of
+        Nothing -> return Nothing
+        Just rScore -> do
+          skullRank <- querySkullRank $ Main.score rScore
+          return $ Just $ rank skullRank
 
 hydrateSkulls :: [Asset] -> IO [Maybe HypeSkull]
 hydrateSkulls = mapM f
@@ -594,7 +639,7 @@ embedAuthAddr :: Text -> Embed
 embedAuthAddr addr =
   def
     & #title ?~ "Authenticate with your Identity Token"
-    & #description ?~ "Please send **1.2 $ADA** within **5 minutes** to the wallet address provided below. Your **1 $ADA** will be returned once authentication is complete."
+    & #description ?~ "Please send **1.2 $ADA** within **20 minutes** to the wallet address provided below. Your **1 $ADA** will be returned once authentication is complete."
     & #fields
       .~ [ EmbedField "AUTH ADDRESS" ("```" <> addr <> "```") True
          ]
@@ -626,7 +671,17 @@ getIdentity addr retries = do
           getIdentity addr $ retries + 1
   where
     retryInterval = 20
-    maxRetries = 15
+    maxRetries = 60
+
+embedSkullList :: Text -> [(Text, HypeSkull, Int)] -> Embed
+embedSkullList username skulls =
+  def
+    & #title ?~ username <> "'s HYPESKULLS"
+    & #fields .~ [EmbedField ("```" <> n <> " [" <> rarity s <> " #" <> T.pack (show r) <> "]" <> "```") ("https://seehype.com/explore/" <> Main.id s) False | (n,s,r) <- skulls]
+    where
+      rarity s = case tokenRarityScore s of
+        Nothing -> ""
+        Just rarity' -> rarityName $ score rarity' 
 
 embedSkull :: Int -> HypeSkull -> Embed
 embedSkull skullID skull =
