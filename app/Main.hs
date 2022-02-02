@@ -700,7 +700,7 @@ skullFields skull occurences =
     EmbedField "SPECIALS" ("```" <> formatField (Main.specials skull) <> " " <> getOccurence "specials" <> "%```") True,
     EmbedField "GLITCH" ("```" <> formatField (glitchString (Main.glitch skull)) <> " " <> getOccurence "glitch" <> "%```") True,
     EmbedField "LOGO" ("```" <> formatField (Main.logo skull) <> " " <> getOccurence "logo" <> "%```") True,
-    EmbedField "FULL PREVIEW" ("https://www.seehype.com/explore/" <> Main.id skull) False
+    EmbedField "FULL PREVIEW" ("https://old.seehype.com/explore/" <> Main.id skull) False
   ]
   where
     glitchString :: Bool -> Text
